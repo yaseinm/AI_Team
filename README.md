@@ -69,7 +69,7 @@ Only the web app is reachable from the network; it passes API calls through to t
 
 1. `cp .env.example .env` and fill in what you have. Every field is optional; a member without credentials simply shows *not set up* on the board and tells you what it needs.
 2. **Claude Code (Max plan):** on your computer run `claude setup-token`, then put the token in `CLAUDE_CODE_OAUTH_TOKEN`.
-3. **Codex (ChatGPT plan):** `docker compose run --rm worker codex login --device-auth` and follow the link.
+3. **Codex (ChatGPT plan):** `docker compose run --rm worker codex login --device-auth`, open the link it prints, enter the code, and wait for the terminal to say you're signed in. The Codex card tells you if its command sandbox can't start on your machine (the fix is one `docker compose` setting that's already in the file).
 4. **Gemini:** paste a free AI Studio key into `GEMINI_API_KEY`, or skip it and use the Antigravity brief.
 5. **Ollama:** keep it running and pull a coding model: `ollama pull qwen3-coder`, then set `OLLAMA_MODEL=qwen3-coder` (on a smaller machine, `qwen2.5-coder:7b`).
 6. `docker compose up --build` again. The four cards at the top of the board turn green as each member comes online.

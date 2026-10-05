@@ -11,6 +11,8 @@ import json
 import os
 import re
 import subprocess
+import sys
+import tempfile
 from typing import Any
 
 from aitc_worker import git, proc
@@ -44,6 +46,35 @@ QA_SCHEMA: dict[str, Any] = {
     },
 }
 AC_ID = re.compile(r"^[A-Z][A-Z0-9]*-[0-9]{1,4}$")
+SANDBOX_MARKER = "AITC-SANDBOX-OK"
+SANDBOX_FIX = ("Codex's command sandbox can't start here, so every command it runs would fail. In Docker the "
+               "worker needs `security_opt: [seccomp=unconfined, apparmor=unconfined]` (now in "
+               "docker-compose.yml): run `git pull` then `docker compose up -d --force-recreate worker`.")
+_sandbox_checked: dict[str, str | None] = {}
+
+
+def sandbox_problem(config: Config) -> str | None:
+    """Why Codex can't run commands on this machine, or None. Checked once per worker process.
+
+    Codex wraps every command it runs in its own Linux sandbox (bwrap). Inside a container that
+    needs user namespaces, which Docker's default seccomp and AppArmor profiles block; the sandbox
+    then fails on every command while `codex` itself still starts fine. Its exit code doesn't
+    reliably say so, hence the marker.
+    """
+    if not sys.platform.startswith("linux"):
+        return None  # macOS uses seatbelt, which needs nothing from us
+    if config.codex_bin not in _sandbox_checked:
+        try:
+            with tempfile.TemporaryDirectory() as scratch:
+                res = subprocess.run([config.codex_bin, "sandbox", "--", "sh", "-c", f"echo {SANDBOX_MARKER}"],
+                                     cwd=scratch, capture_output=True, text=True, timeout=60,
+                                     env=config.child_env(*CREDENTIALS, "CODEX_HOME"))
+            ok = SANDBOX_MARKER in res.stdout
+            tail = (res.stderr or res.stdout).strip().splitlines()[-1:] if not ok else []
+            _sandbox_checked[config.codex_bin] = None if ok else f"{SANDBOX_FIX} ({' '.join(tail)[:160]})"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            _sandbox_checked[config.codex_bin] = f"{SANDBOX_FIX} ({exc})"
+    return _sandbox_checked[config.codex_bin]
 
 
 def availability(config: Config) -> dict[str, Any]:
@@ -55,7 +86,9 @@ def availability(config: Config) -> dict[str, Any]:
     codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
     if not (any(os.environ.get(k) for k in CREDENTIALS[:2]) or os.path.exists(os.path.join(codex_home, "auth.json"))):
         return {"available": False, "provider": "codex", "version": version,
-                "detail": "Set OPENAI_API_KEY (or CODEX_API_KEY), or sign in with `codex login`"}
+                "detail": "Set OPENAI_API_KEY (or CODEX_API_KEY), or sign in with `codex login --device-auth`"}
+    if problem := sandbox_problem(config):
+        return {"available": False, "provider": "codex", "version": version, "detail": problem}
     return {"available": True, "provider": "codex", "version": version, "model": config.codex_model or "default",
             "billing": "subscription" if subscription() else "api"}
 

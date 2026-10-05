@@ -46,6 +46,10 @@ services:
     # Keys come from .env — see .env.example. Members without keys simply stay offline.
     build: ./apps/worker
     restart: unless-stopped
+    # Codex runs every command inside its own sandbox (bwrap), which needs user namespaces.
+    # Docker's default seccomp and AppArmor profiles block those, so without this every command
+    # Codex runs fails and QA can't produce evidence. The container is still a container.
+    security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
     env_file:
       - path: .env
         required: false

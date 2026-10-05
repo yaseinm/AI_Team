@@ -105,3 +105,26 @@ def test_the_worker_git_never_leaks_the_token_into_the_ai_tools(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "y" * 36)
     assert "GITHUB_TOKEN" not in Config().child_env()
     assert subprocess.run(["git", "--version"], capture_output=True).returncode == 0
+
+
+def test_codex_card_explains_a_broken_sandbox(tmp_path, monkeypatch):
+    from aitc_worker.adapters import qa_codex
+
+    def fake(name: str, body: str) -> str:
+        path = tmp_path / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o700)
+        return str(path)
+
+    broken = fake("codex-broken", 'case "$1" in --version) echo codex-cli 0.158.0;; '
+                  'sandbox) echo "bwrap: No permissions to create a new namespace" >&2;; esac\n')
+    working = fake("codex-ok", 'case "$1" in --version) echo codex-cli 0.158.0;; sandbox) shift; '
+                   'while [ "$1" != "--" ]; do shift; done; shift; exec "$@";; esac\n')
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    qa_codex._sandbox_checked.clear()
+    monkeypatch.setenv("CODEX_BIN", broken)
+    card = qa_codex.availability(Config())
+    assert card["available"] is False and "seccomp=unconfined" in card["detail"] and "bwrap" in card["detail"]
+    monkeypatch.setenv("CODEX_BIN", working)
+    assert qa_codex.availability(Config())["available"] is True
+    assert qa_codex.sandbox_problem(Config()) is None  # cached per binary, not per call
